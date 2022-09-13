@@ -105,18 +105,18 @@
       group: 'root'
       owner: 'root'
       mode: '0644'
-  with_dict: '{{ nginx_default_sites }}'
+  loop: "{{ nginx_sites.values() | list | selectattr('default_server','defined') | selectattr('default_server') }}"
   notify:
       - Test nginx and reload
 
 - name: Configure vhost SSL conf files
   template:
       src: 'etc/nginx/ansible-nginx-conf.d/common_ssl.conf.j2'
-      dest: '/etc/nginx/ansible-nginx-conf.d/common_ssl_{{ item.value.domains[0] }}.conf'
+      dest: '/etc/nginx/ansible-nginx-conf.d/common_ssl_{{ item.domains[0] }}.conf'
       group: 'root'
       owner: 'root'
       mode: '0644'
-  with_dict: '{{ nginx_sites }}'
+  loop: "{{ nginx_sites.values() | list }}"
   notify:
       - Test nginx and reload
 
