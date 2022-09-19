@@ -4,13 +4,9 @@ user {{ nginx_user }};
 worker_processes {{ nginx_worker_processes }};
 worker_rlimit_nofile {{ nginx_worker_rlimit_nofile }};
 
-
-{% if nginx_main_directives is iterable -%}
-{% for key in nginx_main_directives %}
-  {{ key }};
-{% endfor %}
-{% endif %}
-
+{%- for key in nginx_main_directives | default([], true) +%}
+{{ key }};
+{%- endfor +%}
 
 events {
   worker_connections {{ nginx_events_worker_connections }};
@@ -19,13 +15,11 @@ events {
 http {
   include /etc/nginx/mime.types;
   default_type application/octet-stream;
-
   server_tokens {{ nginx_http_server_tokens }};
-  {% if nginx_http_add_headers is iterable %}
-    {%- for header in nginx_http_add_headers -%}
+
+  {%- for header in nginx_http_add_headers | default([], true) +%}
   add_header {{ header }};
-    {% endfor -%}
-  {% endif %}
+  {%- endfor +%}
 
   log_format combined_custom {{ nginx_http_access_log_format }};
   access_log /var/log/nginx/access.log combined_custom;
@@ -41,12 +35,46 @@ http {
   gzip_types {{ nginx_http_gzip_types }};
   gzip_disable "{{ nginx_http_gzip_disable }}";
 
-  {% if nginx_http_directives is iterable -%}
-  {% for key in nginx_http_directives %}
-    {{ key }};
-  {% endfor %}
-  {% endif %}
+  ssl_protocols {{ nginx_ssl_protocols }};
+  ssl_ciphers "{{ nginx_ssl_ciphers }}";
+  ssl_prefer_server_ciphers {{ nginx_ssl_prefer_server_ciphers }};
+  ssl_session_cache {{ nginx_ssl_session_cache }};
+  ssl_session_timeout {{ nginx_ssl_session_timeout }};
+  ssl_stapling {{ nginx_ssl_ssl_stapling }};
+  ssl_stapling_verify {{ nginx_ssl_ssl_stapling_verify }};
+  resolver {{ nginx_ssl_resolver }};
+  resolver_timeout {{ nginx_ssl_resolver_timeout }};
+  add_header {{ nginx_ssl_sts_header }};
+  ssl_dhparam {{ nginx_ssl_directory }}/dhparam.pem;
+
+  {%- for key in nginx_proxy_directives | default([], true) +%}
+  {{ key }};
+  {%- endfor +%}
+
+  {%- for key in nginx_http_directives | default([], true) +%}
+  {{ key }};
+  {%- endfor +%}
+
+  # Default server to redirect http traffic to https.
+  
+  {%- for port in (nginx_sites.values() | selectattr("redirect_to_https","defined") | selectattr("redirect_to_https") | selectattr("port_http","defined") | map(attribute="port_http") | unique) +%}
+  server {
+    listen {{ port }};
+    server_name _;
+    {%- if nginx_ssl_acmechallenge +%}
+    location /.well-known/acme-challenge/ {
+      root {{ nginx_ssl_acmechallenge_folder }};
+      default_type "text/plain";
+      try_files $uri =404;
+    }
+    {%- endif +%}
+    location / {
+      return 301 https://$host$request_uri;
+    }
+  }
+  {%- endfor +%}
 
   include /etc/nginx/conf.d/*.conf;
   include /etc/nginx/sites-enabled/*;
 }
+

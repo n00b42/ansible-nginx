@@ -1,5 +1,0 @@
-{% if nginx_default_upstream_proxy_settings is iterable -%}
-{% for key in nginx_default_upstream_proxy_settings %}
-  {{ key }};
-{% endfor %}
-{% endif %}

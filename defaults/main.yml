@@ -1,6 +1,6 @@
 ---
 
-nginx_install_service: True
+nginx_install: yes
 
 nginx_user: 'www-data'
 nginx_worker_processes: 'auto'
@@ -25,60 +25,57 @@ nginx_http_types_hash_max_size: 2048
 nginx_http_gzip: 'on'
 nginx_http_gzip_types: 'text/plain text/css application/javascript application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript image/svg+xml image/svg'
 nginx_http_gzip_disable: 'msie6'
-nginx_main_directives: []
-nginx_http_directives: []
-
-nginx_basic_auth: []
 
 nginx_ssl_directory: /etc/nginx/ssl
 nginx_ssl_dhparam_bits: 2048
-nginx_ssl_generate_self_signed_certs: True
+nginx_ssl_generate_self_signed_certs: no
+nginx_ssl_protocols: 'TLSv1 TLSv1.1 TLSv1.2'
+nginx_ssl_ciphers: 'ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES128-SHA256:DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA:ECDHE-RSA-DES-CBC3-SHA:EDH-RSA-DES-CBC3-SHA:AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-SHA256:AES128-SHA256:AES256-SHA:AES128-SHA:DES-CBC3-SHA:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!RC4'
+nginx_ssl_prefer_server_ciphers: 'on'
+nginx_ssl_session_cache: 'shared:SSL:50m'
+nginx_ssl_session_timeout: '5m'
+nginx_ssl_ssl_stapling: 'on'
+nginx_ssl_ssl_stapling_verify: 'on'
+nginx_ssl_resolver: '8.8.8.8'
+nginx_ssl_resolver_timeout: '5s'
+nginx_ssl_sts_header: 'Strict-Transport-Security "max-age=63072000; includeSubdomains;"'
+nginx_ssl_acmechallenge: no
+nginx_ssl_acmechallenge_folder: '/usr/share/nginx/challenges'
 
-nginx_default_sites:
-  default:
-    domains: []
-    default_server: False
-    listen_http: 80
-    listen_https: 443
-    root: '/usr/share/nginx/html'
-    directives: []
-    ssl:
-      protocols: 'TLSv1 TLSv1.1 TLSv1.2'
-      ciphers: 'ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES128-SHA256:DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA:ECDHE-RSA-DES-CBC3-SHA:EDH-RSA-DES-CBC3-SHA:AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-SHA256:AES128-SHA256:AES256-SHA:AES128-SHA:DES-CBC3-SHA:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!RC4'
-      prefer_server_ciphers: 'on'
-      session_cache: 'shared:SSL:50m'
-      session_timeout: '5m'
-      ssl_stapling: 'on'
-      ssl_stapling_verify: 'on'
-      resolver: '8.8.8.8'
-      resolver_timeout: '5s'
-      sts_header: 'Strict-Transport-Security "max-age=63072000; includeSubdomains;"'
-    cache_all_locations:
-      enabled: True
-      duration: '30s'
-    error_pages:
-      - { code: 404, page: '404.html' }
-      - { code: 500, page: '500.html' }
-    serve_assets:
-      enabled: True
-      pattern: ' ~ ^/assets/'
-      expires: 'max'
-    custom_locations: ''
-    custom_root_location_try_files: ''
-    direct_proxy: ''
-    basic_auth: False
-    basic_auth_message: 'Please sign in'
-    disallow_hidden_files:
-      enabled: True
-    upstreams: []
-
-nginx_default_upstream_proxy_settings:
+nginx_main_directives: []
+nginx_http_directives: []
+nginx_proxy_directives:
   - 'proxy_set_header X-Real-IP $remote_addr'
   - 'proxy_set_header X-Forwarded-Proto $scheme'
   - 'proxy_set_header Host $http_host'
   - 'proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for'
-  - 'proxy_redirect off'
+#  - 'proxy_redirect off'
 
-nginx_letsencrypt_root: '/usr/share/nginx/challenges'
+nginx_site_defaults:
+  domains: [] # [ 'domain.tld', 'sub.domain.tld' ]
+  redirect_to_first_domain: no
+  upstreams: {} # { app: { servers: [ '127.0.0.1:1234' ] } }
+  locations:
+    - uri: '/' # location expression
+      proxy: # upstream from list for proxy_pass, if root is defined as well then use as try_files fallback.
+      proxy_uri: '/'
+      root: #
+      custom: #
+  http: yes
+  https: yes
+  redirect_to_https: yes
+  ipv4: yes
+  ipv6: yes
+  default: no
+  deferred: no
+  port_http: 80
+  port_https: 443
+  basic_auth: []
+  basic_auth_message: 'Please sign in'
+  disallow_hidden_files: yes
+  ssl_override_filename: no
+  error_pages: []
+  directives: []
 
 nginx_sites: {}
+

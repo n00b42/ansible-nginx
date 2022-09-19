@@ -1,29 +1,99 @@
 ---
 
+# Variables and Checks
+
+- name: Prepare variables - step 1
+  set_fact:
+    _nginx_sites: '{{ nginx_sites }}'
+    nginx_sites: {}
+
+- name: Prepare variables - step 2
+  set_fact:
+    nginx_sites: '{{ nginx_sites | combine({item.key: nginx_site_defaults}, recursive=True) | combine({item.key: item.value}, recursive=True) | combine({item.key: {"name": item.key}}, recursive=True) }}'
+  loop_control: { label: '{{ item.key }}' }
+  loop: '{{ _nginx_sites | dict2items }}'
+
+
+#- name: AAAA
+#  ansible.builtin.debug: { msg: '{{ item }}' }
+#  loop: '{{ nginx_sites | dict2items }}'
+
+- name: 'Validate Settings: Domain List'
+  ansible.builtin.fail: { msg: 'Domain list of site `{{item.name}}` is empty.' }
+  failed_when: item.domains | length == 0
+  loop_control: { label: '{{ item.name }}' }
+  loop: '{{ nginx_sites.values() }}'
+
+- name: 'Validate Settings: http/s'
+  ansible.builtin.fail: { msg: 'Site `{{item.name}}` has no valid http/s combination.' }
+  failed_when: not item.http and not item.https
+  loop_control: { label: '{{ item.name }}' }
+  loop: '{{ nginx_sites.values() }}'
+
+- name: 'Check certificate presence'
+  ansible.builtin.command:
+    cmd: 'echo "Certificate `{{ nginx_ssl_directory }}/{{ item.ssl_override_filename | default(item.domains[0], true) }}.pem` does not exist."; false'
+    creates: '{{ nginx_ssl_directory }}/{{ item.ssl_override_filename | default(item.domains[0], true) }}.pem'
+  loop: '{{ nginx_sites.values() }}'
+  when: not nginx_ssl_generate_self_signed_certs
+
+# DEBUG
+
+#- name: AAAA
+#  ansible.builtin.debug: { msg:  }
+##  loop: '{{ nginx_sites.values() | list | subelements("basic_auth") }}'
+
+#- name: DO
+#  ansible.builtin.fail: { msg: 'STOP' }
+
+# Actual Work
+
 - name: Install role dependencies
-  apt:
-    name: 'python-passlib'
+  ansible.builtin.apt:
+    name: python3-passlib
     state: 'present'
-  when: nginx_basic_auth
+  when: nginx_sites.values() | selectattr("basic_auth","defined") | map(attribute="basic_auth") | length > 0
+
+- name: Make sure apt keyring folder exists.
+  ansible.builtin.file:
+    path: '/etc/apt/keyrings'
+    state: 'directory'
+    owner: 'root'
+    group: 'root'
+    mode: '0755'
+
+- name: Add nginx repository key
+  ansible.builtin.get_url:
+    url: https://nginx.org/keys/nginx_signing.key
+    dest: /etc/apt/keyrings/nginx.asc
+    mode: '0644'
+    force: true
+  when: nginx_install
+
+- name: Add apt source for nginx
+  ansible.builtin.apt_repository:
+    repo: 'deb [signed-by=/etc/apt/keyrings/nginx.asc] https://nginx.org/packages/debian/ {{ ansible_distribution_release }} nginx'
+  when: nginx_install
 
 - name: Install nginx
-  apt:
-    name: 'nginx'
-    state: 'present'
-  when: nginx_install_service
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+  when: nginx_install
   notify:
     - Test nginx and restart
 
 - name: Create default nginx directories
-  file:
+  ansible.builtin.file:
     path: '{{ item }}'
     state: 'directory'
     owner: 'root'
     group: 'root'
     mode: '0755'
-  with_items:
+  loop:
     - '/usr/share/nginx/html'
-    - '{{ nginx_letsencrypt_root }}'
+    - '{{ nginx_ssl_acmechallenge_folder if nginx_ssl_acmechallenge else "/usr/share/nginx/html" }}'
     - '/etc/nginx/sites-available'
     - '/etc/nginx/sites-enabled'
     - '/etc/nginx/conf.d'
@@ -31,28 +101,17 @@
     - '{{ nginx_ssl_directory }}'
 
 - name: Remove default site
-  file:
+  ansible.builtin.file:
     path: '{{ item }}'
     state: 'absent'
-  with_items:
-    - '/var/www/html'
+  loop:
     - '/etc/nginx/sites-enabled/default'
     - '/etc/nginx/sites-available/default'
   notify:
     - Test nginx and reload
 
-- name: Expand common_proxy.conf
-  template:
-      src: 'etc/nginx/ansible-nginx-conf.d/common_proxy.conf.j2'
-      dest: '/etc/nginx/ansible-nginx-conf.d/common_proxy.conf'
-      group: 'root'
-      owner: 'root'
-      mode: '0644'
-  notify:
-      - Test nginx and reload
-
 - name: Configure nginx
-  template:
+  ansible.builtin.template:
     src: 'etc/nginx/nginx.conf.j2'
     dest: '/etc/nginx/nginx.conf'
     group: 'root'
@@ -63,81 +122,57 @@
     - Test nginx and reload
 
 - name: Generate self signed SSL certificates
-  command: >
-    openssl req
-      -new
-      -newkey rsa:4096
-      -days 365
-      -nodes
-      -x509
-      -subj "/C=US/ST=NY/L=NY/O=NA/CN=localhost"
-      -keyout '{{ nginx_ssl_directory }}/{{ nginx_ssl_override_filename | default(item.value.domains[0]) }}.key'
-      -out '{{ nginx_ssl_directory }}/{{ nginx_ssl_override_filename | default(item.value.domains[0]) }}.pem'
-  args:
-    creates: '{{ nginx_ssl_directory }}/{{ nginx_ssl_override_filename | default(item.value.domains[0]) }}.pem'
-  with_dict: '{{ nginx_sites }}'
+  ansible.builtin.command:
+    cmd: >
+      openssl req -x509 -nodes -newkey rsa:4096 -days 365
+        -subj '/C=DE/ST=NA/L=NA/O=Self Signed Certificate/CN=localhost'
+        -addext 'subjectAltName = DNS:{{ item.domains | join(", DNS:") }}'
+        -keyout '{{ nginx_ssl_directory }}/{{ item.ssl_override_filename | default(item.domains[0], true) }}.key'
+        -out '{{ nginx_ssl_directory }}/{{ item.ssl_override_filename | default(item.domains[0], true) }}.pem'
+    creates: '{{ nginx_ssl_directory }}/{{ item.ssl_override_filename | default(item.domains[0], true) }}.pem'
+  loop: '{{ nginx_sites.values() }}'
   when: nginx_ssl_generate_self_signed_certs
   notify:
     - Test nginx and restart
 
 - name: Generate X bit dhparam.pem file (this may take a while)
-  command: 'openssl dhparam -out {{ nginx_ssl_directory }}/dhparam.pem {{ nginx_ssl_dhparam_bits }}'
-  args:
+  ansible.builtin.command:
+    cmd: 'openssl dhparam -out {{ nginx_ssl_directory }}/dhparam.pem {{ nginx_ssl_dhparam_bits }}'
     creates: '{{ nginx_ssl_directory }}/dhparam.pem'
   notify:
     - Test nginx and restart
 
 - name: Create basic auth entries
-  htpasswd:
-    path: '/etc/nginx/.htpasswd'
-    name: '{{ item.user }}'
-    password: '{{ item.password }}'
+  community.general.htpasswd:
+    path: '/etc/nginx/{{ item.0.name }}.htpasswd'
+    name: '{{ item.1.user }}'
+    password: '{{ item.1.password }}'
     crypt_scheme: 'sha512_crypt'
     group: 'root'
     owner: 'root'
     mode: '0644'
-  with_items: '{{ nginx_basic_auth }}'
-
-- name: Expand default SSL conf file
-  template:
-      src: 'etc/nginx/ansible-nginx-conf.d/common_ssl.conf.j2'
-      dest: '/etc/nginx/ansible-nginx-conf.d/common_ssl_default.conf'
-      group: 'root'
-      owner: 'root'
-      mode: '0644'
-  loop: "{{ nginx_sites.values() | list | selectattr('default_server','defined') | selectattr('default_server') }}"
-  notify:
-      - Test nginx and reload
-
-- name: Configure vhost SSL conf files
-  template:
-      src: 'etc/nginx/ansible-nginx-conf.d/common_ssl.conf.j2'
-      dest: '/etc/nginx/ansible-nginx-conf.d/common_ssl_{{ item.domains[0] }}.conf'
-      group: 'root'
-      owner: 'root'
-      mode: '0644'
-  loop: "{{ nginx_sites.values() | list }}"
-  notify:
-      - Test nginx and reload
+  loop_control: { label: '{{ item.0.name }} {{ item.1.user }}' }
+  loop: '{{ nginx_sites.values() | list | selectattr("basic_auth","defined") | subelements("basic_auth") }}'
 
 - name: Configure sites-enabled (vhosts)
-  template:
-    src: 'etc/nginx/sites-available/default.conf.j2'
-    dest: '/etc/nginx/sites-available/{{ item.key }}.conf'
+  ansible.builtin.template:
+    src: 'etc/nginx/sites-available/site.conf.j2'
+    dest: '/etc/nginx/sites-available/{{ item.name }}.conf'
     group: 'root'
     owner: 'root'
     mode: '0644'
-  with_dict: '{{ nginx_sites }}'
+  loop_control: { label: '{{ item.name }}' }
+  loop: '{{ nginx_sites.values() }}'
   register: nginx_register_vhost_config
   notify:
     - Test nginx and reload
 
 - name: Symlink sites-available to sites-enabled
-  file:
-    src: '/etc/nginx/sites-available/{{ item.key }}.conf'
-    dest: '/etc/nginx/sites-enabled/{{ item.key }}.conf'
+  ansible.builtin.file:
+    src: '/etc/nginx/sites-available/{{ item }}.conf'
+    dest: '/etc/nginx/sites-enabled/{{ item }}.conf'
     state: 'link'
-  with_dict: '{{ nginx_sites }}'
+  loop: '{{ nginx_sites.keys() }}'
   notify:
     - Test nginx and restart
 
@@ -146,3 +181,4 @@
     name: 'nginx'
     state: 'restarted'
   when: (nginx_register_nginx_config is changed) or (nginx_register_vhost_config is changed)
+

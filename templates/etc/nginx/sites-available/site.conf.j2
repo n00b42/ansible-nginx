@@ -1,0 +1,112 @@
+# {{ ansible_managed }}
+{% set _site = item %}
+{% set _listen_params = (' default' if _site.default else '') + (' deferred' if _site.deferred else '') %}
+{% set _serve_plain_http = _site.http and not _site.redirect_to_https %}
+{% set _first_upstream = _site.upstreams.keys() | first | default('',true) %}
+{% set _primary_domain = _site.domains | first %}
+
+{%- for name,upstream in _site.upstreams.items() | default({}, true) +%}
+upstream {{ name }} {
+{% for server in upstream.servers %}
+  server {{ server }};
+{% endfor -%}
+}
+{%- endfor +%}
+
+server {
+  {%- if _serve_plain_http and _site.ipv4 +%}
+  listen {{ _site.port_http }}{{ _listen_params }};
+  {%- endif +%}
+  {%- if _serve_plain_http and _site.ipv6 +%}
+  listen [::]:{{ _site.port_http }}{{ _listen_params }};
+  {%- endif +%}
+  {%- if _site.https and _site.ipv4 +%}
+  listen {{ _site.port_https }} ssl{{ _listen_params }};
+  {%- endif +%}
+  {%- if _site.https and _site.ipv6 +%}
+  listen [::]:{{ _site.port_https }} ssl{{ _listen_params }};
+  {%- endif +%}
+
+  {%- if _site.https +%}
+  ssl_certificate {{ nginx_ssl_directory }}/{{ nginx_ssl_override_filename | default(_primary_domain, true) }}.pem;
+  ssl_certificate_key {{ nginx_ssl_directory }}/{{ nginx_ssl_override_filename | default(_primary_domain, true) }}.key;
+  ssl_trusted_certificate {{ nginx_ssl_directory }}/{{ nginx_ssl_override_filename | default(_primary_domain, true) }}.pem;
+  {%- endif %}
+
+  server_name {{ _site.domains | join(' ') }};
+
+  {%- for error in _site.error_pages | default([], true) +%}
+  error_page {{ error.code }} /{{ error.page }};
+  {%- endfor +%}
+
+  {%- if _site.basic_auth | default([], true) +%}
+  auth_basic_user_file /etc/nginx/{{ _site.name }}.htpasswd;
+  {%- endif +%}
+
+  {%- if _site.redirect_to_first_domain | default(no) +%}
+  # Redirect to first domain of server
+  if ($host != {{ _primary_domain }}) {
+    return 301 https://{{ _primary_domain }}$request_uri;
+  }
+  {%- endif +%}
+
+  {%- if _serve_plain_http and nginx_ssl_acmechallenge +%}
+  location /.well-known/acme-challenge/ {
+    root {{ nginx_ssl_acmechallenge_folder }};
+    default_type "text/plain";
+    try_files $uri =404;
+  }
+  {%- endif %}
+  
+  {%- if _site.disallow_hidden_files +%}
+  # Prevent access to hidden_files
+  location ~ /\. {
+    return 404;
+    access_log off;
+    log_not_found off;
+  }
+  {%- endif +%}
+  
+  {%- for loc in _site.locations | default([], true) +%}
+  {%- set _locroot = loc.root | default('', true) -%}
+  {%- set _root = _locroot | default(_site.root, true) | default('', true) -%}
+  {%- set _locproxy = loc.proxy | default('', true) -%}
+  {%- set _proxy = _locproxy | default((_site.upstreams.keys()|list)[0], true) | default('', true) -%}
+  {%- set _proxy_uri = loc.proxy_uri | default('/') +%}
+  {%- set _rootAndProxy = (_root | length > 0) and (_proxy | length > 0) +%}
+  location {{ loc.uri }} {
+    {%- if loc.custom | default('',true) | length > 0 +%}
+    {{ loc.custom | indent(4) }}
+    {%- elif _locroot | length > 0 +%}
+    root {{ _root }};
+    try_files $uri $uri/ {{ ('@' + _proxy + '_' + (loop.index|string)) if (_proxy | length > 0) else '=404' }};
+    {%- elif (_locproxy | length == 0) and (_root | length) +%}
+    root {{ _root }};
+    try_files $uri $uri/ {{ ('@' + _proxy + '_' + (loop.index|string)) if (_proxy | length > 0) else '=404' }};
+    {%- elif _proxy +%}
+    proxy_redirect off; {#- uses default and cancels inheritance +#}
+    proxy_pass http://{{ _proxy | default((_site.upstreams.keys()|list)[0], true) | default('') }}{{ _proxy_uri }};
+    {%- else +%}
+    {{ undefined | mandatory('Neither a root location nor an upstream proxy were defined for this location `'+loc.uri+'` or this site `'+_site.name+'`.') }}
+    {%- endif +%}
+
+    {%- if _site.basic_auth | default([], true) | length > 0 +%}
+    auth_basic "{{ _site.basic_auth_message }}";
+    {%- endif +%}
+  }
+  {%- if _rootAndProxy +%}
+  location @{{ _proxy + '_' + (loop.index|string) }} {
+    {%- if _proxy_uri | length > 0 +%}
+    rewrite ^(.*) {{ _proxy_uri }}$1;
+    {%- endif +%}
+    proxy_redirect off; {#- uses default and cancels inheritance +#}
+    proxy_pass http://{{ _proxy }};
+  }
+  {%- endif +%}
+  {%- endfor +%}
+
+  {%- for directive in _site.directives | default([], true) +%}
+  {{ directive }};
+  {%- endfor +%}
+}
+
