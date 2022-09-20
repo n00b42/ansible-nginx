@@ -72,7 +72,7 @@
 
 - name: Add apt source for nginx
   ansible.builtin.apt_repository:
-    repo: 'deb [signed-by=/etc/apt/keyrings/nginx.asc] https://nginx.org/packages/debian/ {{ ansible_distribution_release }} nginx'
+    repo: 'deb [signed-by=/etc/apt/keyrings/nginx.asc] https://nginx.org/packages/{{ ansible_lsb.id|lower }}/ {{ ansible_distribution_release }} nginx'
   when: nginx_install
 
 - name: Install nginx
